@@ -21,27 +21,50 @@ interface ChunkResult {
 
 export async function POST(req: NextRequest) {
   try {
-    const { question } = await req.json();
+    const body = await req.json();
+    const question = body?.question as string;
 
     if (!question || typeof question !== "string" || question.trim().length === 0) {
-      return NextResponse.json(
-        { error: "Question is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Question is required" }, { status: 400 });
     }
 
-    // Embed the query
-    const queryEmbedding = await generateEmbedding(question);
+    // -----------------------------
+    // Command parsing (interface logic)
+    // -----------------------------
+    const raw = question.trim();
+    const input = raw.toLowerCase();
 
-    // Retrieve top K relevant chunks
-    const { data: chunks, error: matchError } = await getSupabase().rpc(
-      "match_chunks",
-      {
-        query_embedding: JSON.stringify(queryEmbedding),
-        match_count: 8,
-        match_threshold: 0.3,
-      }
-    );
+    let mode: "ask" | "explain" | "summarize" | "quiz" = "ask";
+    let topic = raw;
+
+    if (input.startsWith("explain ")) {
+      mode = "explain";
+      topic = raw.replace(/^explain\s+/i, "").trim();
+    } else if (input.startsWith("summarize ")) {
+      mode = "summarize";
+      topic = raw.replace(/^summarize\s+/i, "").trim();
+    } else if (input === "quiz me" || input.startsWith("quiz me")) {
+      mode = "quiz";
+      // Optional: allow "quiz me on X"
+      const m = raw.match(/^quiz me( on )?/i);
+      topic = raw.slice(m?.[0]?.length ?? 0).trim();
+      if (!topic) topic = "the uploaded materials";
+    }
+
+    if (!topic) {
+      return NextResponse.json({ error: "Please provide a topic." }, { status: 400 });
+    }
+
+    // -----------------------------
+    // Retrieval uses TOPIC (not the full command)
+    // -----------------------------
+    const queryEmbedding = await generateEmbedding(topic);
+
+    const { data: chunks, error: matchError } = await getSupabase().rpc("match_chunks", {
+      query_embedding: JSON.stringify(queryEmbedding),
+      match_count: 8,
+      match_threshold: 0.65,
+    });
 
     if (matchError) throw matchError;
 
@@ -50,14 +73,13 @@ export async function POST(req: NextRequest) {
     if (typedChunks.length === 0) {
       return NextResponse.json({
         answer:
-          "I could not find any relevant information in the uploaded materials to answer this question.",
+          "I could not find any relevant information in the uploaded materials to answer this request.",
         citations: [],
         sources: [],
         concepts: [],
       });
     }
 
-    // Build context from retrieved chunks
     const context = typedChunks
       .map(
         (c, i) =>
@@ -65,28 +87,48 @@ export async function POST(req: NextRequest) {
       )
       .join("\n\n---\n\n");
 
-    // Generate answer
+    // -----------------------------
+    // Mode-specific prompt
+    // -----------------------------
+    let modeInstruction = "";
+    if (mode === "explain") {
+      modeInstruction =
+        "Explain the topic clearly and simply, like a professor. Use short paragraphs and one concrete example if the sources include one.";
+    } else if (mode === "summarize") {
+      modeInstruction =
+        "Write a structured summary with 3-6 bullet points. Keep it concise and only use what appears in the sources.";
+    } else if (mode === "quiz") {
+      modeInstruction =
+        "Create ONE multiple-choice question based strictly on the sources (A-D), then give the correct answer and a one-sentence explanation with a citation.";
+    } else {
+      modeInstruction = "Answer the user's question directly and concisely.";
+    }
+
+    const systemPrompt = `You are a knowledge assistant. Answer the user's request ONLY using the provided source material.
+
+Rules:
+1. Only use information from the provided sources. Do not use any outside knowledge.
+2. Cite your sources inline using [Source N] notation.
+3. If the sources do not contain enough information to fully answer the request, say so clearly.
+4. Do not hallucinate or make up information.
+5. Be concise and direct.
+6. Do not output code fences or markdown code blocks.
+
+Task:
+${modeInstruction}
+
+After your answer, output ONE line in this exact format (no code block):
+CONCEPTS_JSON: ["concept1","concept2",...]
+Choose 5-8 short concepts from the sources and your answer.`;
+
     const completion = await getOpenAI().chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.1,
       messages: [
-        {
-          role: "system",
-          content: `You are a knowledge assistant. Answer the user's question ONLY using the provided source material. Follow these rules strictly:
-
-1. Only use information from the provided sources. Do not use any outside knowledge.
-2. Cite your sources inline using [Source N] notation.
-3. If the sources do not contain enough information to fully answer the question, say so clearly.
-4. Do not hallucinate or make up information.
-5. Be concise and direct.
-
-After your answer, on a new line, output a JSON block with exactly this format:
-CONCEPTS_JSON: ["concept1", "concept2", ..., "conceptN"]
-List 5-8 key concepts/topics from the sources and your answer that the user might want to explore further. Use short, clear phrases.`,
-        },
+        { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Sources:\n\n${context}\n\nQuestion: ${question}`,
+          content: `Sources:\n\n${context}\n\nUser request: ${topic}`,
         },
       ],
     });
@@ -103,7 +145,7 @@ List 5-8 key concepts/topics from the sources and your answer that the user migh
         concepts = JSON.parse(conceptMatch[1]);
         answer = rawAnswer.replace(/CONCEPTS_JSON:\s*\[[\s\S]*?\]/, "").trim();
       } catch {
-        // If parsing fails, just use the raw answer
+        // ignore parse errors
       }
     }
 
@@ -117,7 +159,6 @@ List 5-8 key concepts/topics from the sources and your answer that the user migh
         }
       }
 
-      // Upsert edges (increment weight on conflict)
       for (const edge of edges) {
         try {
           await getSupabase().rpc("upsert_concept_edge", {
@@ -125,12 +166,11 @@ List 5-8 key concepts/topics from the sources and your answer that the user migh
             p_target: edge.target,
           });
         } catch {
-          // Silently ignore if the RPC doesn't exist yet
+          // ignore
         }
       }
     }
 
-    // Build citations and sources
     const citations = typedChunks.map((c) => ({
       filename: c.filename,
       pageNumber: c.page_number,
