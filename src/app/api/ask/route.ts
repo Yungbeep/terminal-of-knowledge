@@ -60,10 +60,9 @@ export async function POST(req: NextRequest) {
     const queryEmbedding = await generateEmbedding(topic);
 
     const { data: chunks, error: matchError } = await getSupabase().rpc("match_chunks", {
-      query_embedding: JSON.stringify(queryEmbedding),
-      match_count: 8,
-      match_threshold: 0.0, // always return topK (we decide relevance below)
-    });
+  query_embedding: queryEmbedding,
+  match_count: 8,
+});
 
     if (matchError) throw matchError;
 
