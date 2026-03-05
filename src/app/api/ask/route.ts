@@ -54,6 +54,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Please provide a topic." }, { status: 400 });
     }
 
+if (input === "sources") {
+  const { data, error } = await getSupabase()
+    .from("documents")
+    .select("filename")
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error) throw error;
+
+  const names = (data ?? []).map(d => d.filename);
+  return NextResponse.json({
+    answer: names.length ? names.join("\n") : "No sources uploaded yet.",
+    citations: [],
+    sources: [],
+    concepts: [],
+  });
+}
+
     // -----------------------------
     // Retrieval uses TOPIC (not the full command)
     // -----------------------------
