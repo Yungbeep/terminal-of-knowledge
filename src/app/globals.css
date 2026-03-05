@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0c0c0c;
+  --fg: #00ff41;
+  --fg-dim: #00cc33;
+  --fg-muted: #008822;
+  --accent: #00ff41;
+  --error: #ff3333;
+  --border: #1a3a1a;
+  --surface: #111611;
+}
+
+@theme inline {
+  --font-mono: var(--font-mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono), "Courier New", monospace;
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--fg-muted);
+  border-radius: 3px;
+}
+
+/* Terminal cursor blink */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.cursor-blink {
+  animation: blink 1s infinite;
+}
+
+/* Glow effect */
+@keyframes glow {
+  0%, 100% { text-shadow: 0 0 4px #00ff4180; }
+  50% { text-shadow: 0 0 8px #00ff41b0; }
+}
+.text-glow {
+  animation: glow 2s ease-in-out infinite;
+}
