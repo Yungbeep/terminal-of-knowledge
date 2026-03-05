@@ -16,7 +16,7 @@ interface ChunkResult {
   page_number: number | null;
   chunk_index: number;
   filename: string;
-  similarity: number;
+  similarity: number; // assumed 0..1 (or 0..100 depending on RPC—debug logs will reveal)
 }
 
 export async function POST(req: NextRequest) {
@@ -45,7 +45,6 @@ export async function POST(req: NextRequest) {
       topic = raw.replace(/^summarize\s+/i, "").trim();
     } else if (input === "quiz me" || input.startsWith("quiz me")) {
       mode = "quiz";
-      // Optional: allow "quiz me on X"
       const m = raw.match(/^quiz me( on )?/i);
       topic = raw.slice(m?.[0]?.length ?? 0).trim();
       if (!topic) topic = "the uploaded materials";
@@ -63,24 +62,58 @@ export async function POST(req: NextRequest) {
     const { data: chunks, error: matchError } = await getSupabase().rpc("match_chunks", {
       query_embedding: JSON.stringify(queryEmbedding),
       match_count: 8,
-      match_threshold: 0.65,
+      match_threshold: 0.0, // always return topK (we decide relevance below)
     });
 
     if (matchError) throw matchError;
 
     const typedChunks = (chunks || []) as ChunkResult[];
 
+    // ---- Debug: see what you're actually retrieving ----
+    const top = typedChunks[0];
+    console.log("ASK MODE:", mode);
+    console.log("ASK TOPIC:", topic);
+    console.log("TOP MATCH:", top ? { sim: top.similarity, file: top.filename, page: top.page_number } : null);
+
     if (typedChunks.length === 0) {
       return NextResponse.json({
-        answer:
-          "I could not find any relevant information in the uploaded materials to answer this request.",
+        answer: "I could not find any relevant information in the uploaded materials to answer this request.",
         citations: [],
         sources: [],
         concepts: [],
       });
     }
 
-    const context = typedChunks
+    // -----------------------------
+    // Relevance gate + filtering
+    // -----------------------------
+    // NOTE: Depending on your SQL RPC, similarity might be 0..1 OR 0..100.
+    // We'll normalize to 0..1 if it looks like 0..100.
+    const bestRaw = typedChunks[0]?.similarity ?? 0;
+    const best = bestRaw > 1 ? bestRaw / 100 : bestRaw;
+
+    // Start permissive; tune later after you see real values in logs.
+    const MIN_RELEVANCE = 0.35;
+
+    if (best < MIN_RELEVANCE) {
+      return NextResponse.json({
+        answer: "I could not find any relevant information in the uploaded materials to answer this request.",
+        citations: [],
+        sources: [],
+        concepts: [],
+      });
+    }
+
+    // Filter out very low similarity chunks so you don't poison context
+    const filteredChunks = typedChunks.filter((c) => {
+      const sim = c.similarity > 1 ? c.similarity / 100 : c.similarity;
+      return sim >= 0.25;
+    });
+
+    // If filtering removed everything, fall back to top 1
+    const finalChunks = filteredChunks.length > 0 ? filteredChunks : [typedChunks[0]];
+
+    const context = finalChunks
       .map(
         (c, i) =>
           `[Source ${i + 1}: ${c.filename}${c.page_number ? `, p.${c.page_number}` : ""}]\n${c.content}`
@@ -171,13 +204,14 @@ Choose 5-8 short concepts from the sources and your answer.`;
       }
     }
 
-    const citations = typedChunks.map((c) => ({
+    // Build citations and sources based on the chunks actually used for context
+    const citations = finalChunks.map((c) => ({
       filename: c.filename,
       pageNumber: c.page_number,
       similarity: Math.round(c.similarity * 100) / 100,
     }));
 
-    const sources = typedChunks.map((c) => ({
+    const sources = finalChunks.map((c) => ({
       filename: c.filename,
       pageNumber: c.page_number,
       content: c.content,
