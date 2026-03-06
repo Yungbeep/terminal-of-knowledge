@@ -31,13 +31,18 @@ export async function POST(req: NextRequest) {
     const raw = question.trim();
     const input = raw.toLowerCase();
 
-    let mode: "ask" | "explain" | "summarize" | "quiz" | "learn" = "ask";
+    let mode: "ask" | "explain" | "summarize" | "quiz" | "learn" | "ingest" = "ask";
     let topic = raw;
 
       if (input.startsWith("learn:")) {
         mode = "learn";
         topic = raw.replace(/^learn:\s*/i, "").trim();
       }
+
+      if (input.startsWith("ingest ")) {
+  mode = "ingest";
+  topic = raw.replace(/^ingest\s+/i, "").trim();
+    }   
       else if (input.startsWith("explain ")) { 
       mode = "explain";
       topic = raw.replace(/^explain\s+/i, "").trim();
@@ -54,7 +59,33 @@ export async function POST(req: NextRequest) {
     if (!topic) {
       return NextResponse.json({ error: "Please provide a topic." }, { status: 400 });
     }
-    
+
+    if (mode === "ingest") {
+  const { scrapePage } = await import("@/lib/scrape");
+  const { chunkText } = await import("@/lib/chunk");
+
+  const text = await scrapePage(topic);
+
+  const chunks = chunkText(text);
+
+  for (const chunk of chunks) {
+    const embedding = await generateEmbedding(chunk);
+
+    await getSupabase().from("knowledge").insert({
+      question: chunk.slice(0, 120),
+      answer: chunk,
+      embedding
+    });
+  }
+
+  return NextResponse.json({
+    answer: `Ingested ${chunks.length} knowledge chunks from ${topic}`,
+    citations: [],
+    sources: [],
+    concepts: []
+  });
+}
+
 if (mode === "learn") {
   const embedding = await generateEmbedding(topic);
 
