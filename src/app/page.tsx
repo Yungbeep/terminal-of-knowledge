@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback, FormEvent } from "react";
 
+import BootGate from "@/components/BootGate"; // adjust if your path differs
+
 interface Citation {
   filename: string;
   pageNumber: number | null;
@@ -199,6 +201,7 @@ Or just type a question to query your materials.`,
   }, []);
 
   return (
+    <BootGate alwaysPlay>
     <main className="flex min-h-screen items-center justify-center p-4">
       <div
         className="w-full max-w-3xl flex flex-col"
@@ -522,5 +525,6 @@ Or just type a question to query your materials.`,
         />
       </div>
     </main>
+      </BootGate>
   );
 }
