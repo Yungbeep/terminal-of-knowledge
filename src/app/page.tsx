@@ -24,16 +24,15 @@ interface Message {
   concepts?: string[];
 }
 
-type AppMode = "upload" | "chat";
+
 
 export default function Home() {
-  const [mode, setMode] = useState<AppMode>("upload");
+  
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "system",
       content:
-        'Terminal of Knowledge v1.0\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nUpload your course materials to begin.\nSupported formats: PDF, TXT, MD, DOCX\n\nType "help" for available commands.',
-    },
+            'Terminal of Knowledge v1.0\n━━━━━━━━━━━━━━━━━━━━━━━━━━\nAsk questions, upload files, paste text, or run commands.\nSupported formats: PDF, TXT, MD, DOCX\n\nType "help" for available commands.',}
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -55,8 +54,8 @@ export default function Home() {
   }, [messages]);
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, [mode, isLoading]);
+  inputRef.current?.focus();
+}, [isLoading]);
 
   const addMessage = useCallback((msg: Message) => {
     setMessages((prev) => [...prev, msg]);
@@ -102,7 +101,7 @@ export default function Home() {
             role: "system",
             content: `Ingestion complete.\n${summary}\n\nYou can now ask questions about your materials.\nType your question or "help" for commands.`,
           });
-          setMode("chat");
+          
         }
       } catch {
         addMessage({
@@ -163,12 +162,18 @@ export default function Home() {
         addMessage({
           role: "system",
           content: `Available commands:
-  upload    - Upload files (opens file picker)
-  paste     - Paste text content for ingestion
-  clear     - Clear terminal
-  help      - Show this help message
+          upload                 - Upload files
+          paste                  - Paste text for ingestion
+          clear                  - Clear terminal
+          help                   - Show this help message
+          sources                - List uploaded sources
+          explain <topic>        - Explain a topic from sources
+          summarize <topic>      - Summarize a topic from sources
+          quiz me on <topic>     - Generate a quiz question
+          learn: <text>          - Save knowledge directly
+          ingest <url>           - Ingest a webpage into the library
 
-Or just type a question to query your materials.`,
+        Or just type a question.`,
         });
         return;
       }
@@ -434,81 +439,59 @@ Or just type a question to query your materials.`,
         )}
 
         {/* Input area */}
-        <div
-          className="flex items-center rounded-b-lg"
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderTop: "none",
-          }}
-        >
-          {mode === "upload" && (
-            <div className="flex-1 flex items-center gap-2 p-3">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading}
-                className="text-sm px-4 py-2 rounded cursor-pointer hover:brightness-125 transition-all disabled:opacity-50"
-                style={{ background: "var(--accent)", color: "var(--bg)" }}
-              >
-                Upload Files
-              </button>
-              <button
-                onClick={() => setShowPaste(true)}
-                disabled={isLoading}
-                className="text-sm px-4 py-2 rounded cursor-pointer hover:brightness-125 transition-all disabled:opacity-50"
-                style={{
-                  border: "1px solid var(--border)",
-                  color: "var(--fg-dim)",
-                }}
-              >
-                Paste Text
-              </button>
-              <span
-                className="text-xs ml-2"
-                style={{ color: "var(--fg-muted)" }}
-              >
-                PDF, TXT, MD, DOCX — max 20MB
-              </span>
-            </div>
-          )}
-
-          {mode === "chat" && (
-            <form
-              onSubmit={handleSubmit}
-              className="flex-1 flex items-center"
-            >
-              <span
-                className="pl-3 text-sm"
-                style={{ color: "var(--accent)" }}
-              >
-                {"$"}
-              </span>
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={isLoading}
-                placeholder="Type a question or command..."
-                className="flex-1 bg-transparent p-3 text-sm outline-none placeholder:opacity-30"
-                style={{ color: "var(--fg)", fontFamily: "inherit" }}
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading}
-                className="text-xs px-3 py-1 mr-2 rounded cursor-pointer"
-                style={{
-                  border: "1px solid var(--border)",
-                  color: "var(--fg-muted)",
-                }}
-                title="Upload more files"
-              >
-                + Upload
-              </button>
-            </form>
-          )}
-        </div>
+<div
+  className="rounded-b-lg"
+  style={{
+    background: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderTop: "none",
+  }}
+>
+  <form onSubmit={handleSubmit} className="flex items-center">
+    <span
+      className="pl-3 text-sm"
+      style={{ color: "var(--accent)" }}
+    >
+      {"$"}
+    </span>
+    <input
+      ref={inputRef}
+      value={input}
+      onChange={(e) => setInput(e.target.value)}
+      disabled={isLoading}
+      placeholder='Type a command or question... ("help" for commands)'
+      className="flex-1 bg-transparent p-3 text-sm outline-none placeholder:opacity-30"
+      style={{ color: "var(--fg)", fontFamily: "inherit" }}
+      autoFocus
+    />
+    <button
+      type="button"
+      onClick={() => fileInputRef.current?.click()}
+      disabled={isLoading}
+      className="text-xs px-3 py-1 mr-2 rounded cursor-pointer"
+      style={{
+        border: "1px solid var(--border)",
+        color: "var(--fg-muted)",
+      }}
+      title="Upload files"
+    >
+      Upload
+    </button>
+    <button
+      type="button"
+      onClick={() => setShowPaste(true)}
+      disabled={isLoading}
+      className="text-xs px-3 py-1 mr-3 rounded cursor-pointer"
+      style={{
+        border: "1px solid var(--border)",
+        color: "var(--fg-muted)",
+      }}
+      title="Paste text"
+    >
+      Paste
+    </button>
+  </form>
+</div>
 
         {/* Hidden file input */}
         <input
@@ -521,6 +504,8 @@ Or just type a question to query your materials.`,
             handleUpload(e.target.files);
             e.target.value = "";
           }}
+
+          
         />
       </div>
     </main>
