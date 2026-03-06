@@ -1,8 +1,7 @@
 "use client";
 
+import BootGate from "@/components/BootGate";
 import { useState, useRef, useEffect, useCallback, FormEvent } from "react";
-
-import BootGate from "@/components/BootGate"; // adjust if your path differs
 
 interface Citation {
   filename: string;
@@ -525,6 +524,6 @@ Or just type a question to query your materials.`,
         />
       </div>
     </main>
-      </BootGate>
+    </BootGate>
   );
 }
