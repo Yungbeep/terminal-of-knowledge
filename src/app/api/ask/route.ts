@@ -60,44 +60,55 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Please provide a topic." }, { status: 400 });
     }
 
-    if (mode === "ingest") {
-  const { scrapePage } = await import("@/lib/scrape");
-  const { chunkText } = await import("@/lib/chunk");
 
-  const text = await scrapePage(topic);
+  if (mode === "ingest") {
+  try {
+    const { scrapePage } = await import("@/lib/scrape");
+    const { chunkText } = await import("@/lib/chunk");
 
-  const chunks = chunkText(text);
+    const text = await scrapePage(topic);
+    const chunks = chunkText(text).slice(0, 500);
 
-let inserted = 0;
-let skipped = 0;
+    let inserted = 0;
+    let skipped = 0;
 
-for (const chunk of chunks) {
-  const embedding = await generateEmbedding(chunk);
+    for (const chunk of chunks) {
+      const embedding = await generateEmbedding(chunk);
 
-  const { data: duplicate } = await getSupabase().rpc("match_knowledge_duplicate", {
-    query_embedding: embedding,
-    similarity_threshold: 0.92
-  });
+      const { data: duplicate } = await getSupabase().rpc("match_knowledge_duplicate", {
+        query_embedding: embedding,
+        similarity_threshold: 0.92,
+      });
 
-  if (duplicate && duplicate.length > 0) {
-    skipped++;
-    continue;
+      if (duplicate && duplicate.length > 0) {
+        skipped++;
+        continue;
+      }
+
+      await getSupabase().from("knowledge").insert({
+        question: chunk.slice(0, 120),
+        answer: chunk,
+        embedding,
+      });
+
+      inserted++;
+    }
+
+    return NextResponse.json({
+      answer: `Ingested ${inserted} chunks (${skipped} duplicates skipped) from ${topic}`,
+      citations: [],
+      sources: [],
+      concepts: [],
+    });
+  } catch (err) {
+    console.error("INGEST ERROR:", err);
+    return NextResponse.json(
+      {
+        error: err instanceof Error ? err.message : "Failed to ingest URL",
+      },
+      { status: 500 }
+    );
   }
-
-  await getSupabase().from("knowledge").insert({
-    question: chunk.slice(0, 120),
-    answer: chunk,
-    embedding
-  });
-
-  inserted++;
-}
- return NextResponse.json({
-  answer: `Ingested ${inserted} chunks (${skipped} duplicates skipped) from ${topic}`,
-  citations: [],
-  sources: [],
-  concepts: []
-});
 }
 
 if (mode === "learn") {
@@ -336,4 +347,4 @@ Choose 5-8 short concepts from the sources and your answer.`;
       { status: 500 }
     );
   }
-}
+    }
