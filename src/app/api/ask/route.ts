@@ -16,7 +16,7 @@ interface ChunkResult {
   page_number: number | null;
   chunk_index: number;
   filename: string;
-  similarity: number; // assumed 0..1 (or 0..100 depending on RPC—debug logs will reveal)
+  similarity: number;
 }
 
 export async function POST(req: NextRequest) {
@@ -28,9 +28,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Question is required" }, { status: 400 });
     }
 
-    // -----------------------------
-    // Command parsing (interface logic)
-    // -----------------------------
     const raw = question.trim();
     const input = raw.toLowerCase();
 
@@ -54,39 +51,70 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Please provide a topic." }, { status: 400 });
     }
 
-if (input === "sources") {
-  const { data, error } = await getSupabase()
-    .from("documents")
-    .select("filename")
-    .order("created_at", { ascending: false })
-    .limit(20);
+    if (input === "sources") {
+      const { data, error } = await getSupabase()
+        .from("documents")
+        .select("filename")
+        .order("created_at", { ascending: false })
+        .limit(20);
 
-  if (error) throw error;
+      if (error) throw error;
 
-  const names = (data ?? []).map(d => d.filename);
-  return NextResponse.json({
-    answer: names.length ? names.join("\n") : "No sources uploaded yet.",
-    citations: [],
-    sources: [],
-    concepts: [],
-  });
-}
+      const names = (data ?? []).map((d) => d.filename);
+      return NextResponse.json({
+        answer: names.length ? names.join("\n") : "No sources uploaded yet.",
+        citations: [],
+        sources: [],
+        concepts: [],
+      });
+    }
 
-    // -----------------------------
-    // Retrieval uses TOPIC (not the full command)
-    // -----------------------------
     const queryEmbedding = await generateEmbedding(topic);
 
+    // Knowledge Base lookup
+    const { data: kbHits, error: kbErr } = await getSupabase().rpc("match_knowledge", {
+      query_embedding: queryEmbedding,
+      match_threshold: 0.85,
+      match_count: 1,
+    });
+
+    if (kbErr) {
+      console.warn("match_knowledge error:", kbErr);
+    }
+
+    const kbTop = kbHits && kbHits.length > 0 ? kbHits[0] : null;
+
+    if (kbTop) {
+      return NextResponse.json({
+        answer: kbTop.answer,
+        citations: [
+          {
+            filename: "Knowledge Base",
+            pageNumber: null,
+            similarity: Math.round((kbTop.similarity ?? 0) * 100) / 100,
+          },
+        ],
+        sources: [
+          {
+            filename: "Knowledge Base",
+            pageNumber: null,
+            content: kbTop.question ?? "",
+            similarity: Math.round((kbTop.similarity ?? 0) * 100) / 100,
+          },
+        ],
+        concepts: [],
+      });
+    }
+
     const { data: chunks, error: matchError } = await getSupabase().rpc("match_chunks", {
-  query_embedding: queryEmbedding,
-  match_count: 8,
-});
+      query_embedding: queryEmbedding,
+      match_count: 8,
+    });
 
     if (matchError) throw matchError;
 
     const typedChunks = (chunks || []) as ChunkResult[];
 
-    // ---- Debug: see what you're actually retrieving ----
     const top = typedChunks[0];
     console.log("ASK MODE:", mode);
     console.log("ASK TOPIC:", topic);
@@ -101,15 +129,8 @@ if (input === "sources") {
       });
     }
 
-    // -----------------------------
-    // Relevance gate + filtering
-    // -----------------------------
-    // NOTE: Depending on your SQL RPC, similarity might be 0..1 OR 0..100.
-    // We'll normalize to 0..1 if it looks like 0..100.
     const bestRaw = typedChunks[0]?.similarity ?? 0;
     const best = bestRaw > 1 ? bestRaw / 100 : bestRaw;
-
-    // Start permissive; tune later after you see real values in logs.
     const MIN_RELEVANCE = 0.35;
 
     if (best < MIN_RELEVANCE) {
@@ -121,13 +142,11 @@ if (input === "sources") {
       });
     }
 
-    // Filter out very low similarity chunks so you don't poison context
     const filteredChunks = typedChunks.filter((c) => {
       const sim = c.similarity > 1 ? c.similarity / 100 : c.similarity;
       return sim >= 0.25;
     });
 
-    // If filtering removed everything, fall back to top 1
     const finalChunks = filteredChunks.length > 0 ? filteredChunks : [typedChunks[0]];
 
     const context = finalChunks
@@ -137,9 +156,6 @@ if (input === "sources") {
       )
       .join("\n\n---\n\n");
 
-    // -----------------------------
-    // Mode-specific prompt
-    // -----------------------------
     let modeInstruction = "";
     if (mode === "explain") {
       modeInstruction =
@@ -185,7 +201,6 @@ Choose 5-8 short concepts from the sources and your answer.`;
 
     const rawAnswer = completion.choices[0]?.message?.content || "";
 
-    // Parse concepts from the answer
     let answer = rawAnswer;
     let concepts: string[] = [];
 
@@ -199,7 +214,6 @@ Choose 5-8 short concepts from the sources and your answer.`;
       }
     }
 
-    // Store concept co-occurrence edges
     if (concepts.length > 1) {
       const edges: { source: string; target: string }[] = [];
       for (let i = 0; i < concepts.length; i++) {
@@ -221,7 +235,6 @@ Choose 5-8 short concepts from the sources and your answer.`;
       }
     }
 
-    // Build citations and sources based on the chunks actually used for context
     const citations = finalChunks.map((c) => ({
       filename: c.filename,
       pageNumber: c.page_number,
@@ -234,6 +247,19 @@ Choose 5-8 short concepts from the sources and your answer.`;
       content: c.content,
       similarity: Math.round(c.similarity * 100) / 100,
     }));
+
+    // Save newly generated answer into Knowledge Base
+    if (mode === "ask") {
+      try {
+        await getSupabase().from("knowledge").insert({
+          question: topic,
+          answer,
+          embedding: queryEmbedding,
+        });
+      } catch (e) {
+        console.warn("Failed to store knowledge:", e);
+      }
+    }
 
     return NextResponse.json({ answer, citations, sources, concepts });
   } catch (err) {
