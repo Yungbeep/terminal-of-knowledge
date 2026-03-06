@@ -68,22 +68,36 @@ export async function POST(req: NextRequest) {
 
   const chunks = chunkText(text);
 
-  for (const chunk of chunks) {
-    const embedding = await generateEmbedding(chunk);
+let inserted = 0;
+let skipped = 0;
 
-    await getSupabase().from("knowledge").insert({
-      question: chunk.slice(0, 120),
-      answer: chunk,
-      embedding
-    });
+for (const chunk of chunks) {
+  const embedding = await generateEmbedding(chunk);
+
+  const { data: duplicate } = await getSupabase().rpc("match_knowledge_duplicate", {
+    query_embedding: embedding,
+    similarity_threshold: 0.92
+  });
+
+  if (duplicate && duplicate.length > 0) {
+    skipped++;
+    continue;
   }
 
-  return NextResponse.json({
-    answer: `Ingested ${chunks.length} knowledge chunks from ${topic}`,
-    citations: [],
-    sources: [],
-    concepts: []
+  await getSupabase().from("knowledge").insert({
+    question: chunk.slice(0, 120),
+    answer: chunk,
+    embedding
   });
+
+  inserted++;
+}
+ return NextResponse.json({
+  answer: `Ingested ${inserted} chunks (${skipped} duplicates skipped) from ${topic}`,
+  citations: [],
+  sources: [],
+  concepts: []
+});
 }
 
 if (mode === "learn") {
