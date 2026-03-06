@@ -31,10 +31,14 @@ export async function POST(req: NextRequest) {
     const raw = question.trim();
     const input = raw.toLowerCase();
 
-    let mode: "ask" | "explain" | "summarize" | "quiz" = "ask";
+    let mode: "ask" | "explain" | "summarize" | "quiz" | "learn" = "ask";
     let topic = raw;
 
-    if (input.startsWith("explain ")) {
+      if (input.startsWith("learn:")) {
+        mode = "learn";
+        topic = raw.replace(/^learn:\s*/i, "").trim();
+      }
+      else if (input.startsWith("explain ")) { 
       mode = "explain";
       topic = raw.replace(/^explain\s+/i, "").trim();
     } else if (input.startsWith("summarize ")) {
@@ -50,7 +54,25 @@ export async function POST(req: NextRequest) {
     if (!topic) {
       return NextResponse.json({ error: "Please provide a topic." }, { status: 400 });
     }
+    
+if (mode === "learn") {
+  const embedding = await generateEmbedding(topic);
 
+  const { error } = await getSupabase().from("knowledge").insert({
+    question: topic,
+    answer: topic,
+    embedding,
+  });
+
+  if (error) throw error;
+
+  return NextResponse.json({
+    answer: `Learned: ${topic}`,
+    citations: [],
+    sources: [],
+    concepts: [],
+  });
+}
     if (input === "sources") {
       const { data, error } = await getSupabase()
         .from("documents")
