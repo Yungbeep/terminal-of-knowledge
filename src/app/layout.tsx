@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono } from "next/font/google";
+import { VT323 } from "next/font/google";
 import "./globals.css";
 
-const mono = JetBrains_Mono({
-  variable: "--font-mono",
+const vt323 = VT323({
+  weight: "400",
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
   title: "Terminal of Knowledge",
-  description: "Upload course materials and ask questions in a terminal-style UI",
+  description: "Retro CRT knowledge interface",
 };
 
 export default function RootLayout({
@@ -18,8 +18,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${mono.variable} antialiased`}>{children}</body>
+    <html lang="en">
+      <body className={vt323.className}>{children}</body>
     </html>
   );
 }
